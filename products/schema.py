@@ -1,3 +1,6 @@
+import base64
+from django.core.files.base import ContentFile
+from django.http import JsonResponse
 import graphene
 from graphene_django import DjangoObjectType
 from .models import Product
@@ -30,51 +33,68 @@ class CreateProduct(graphene.Mutation):
     class Arguments:
         name = graphene.String(required=True)
         price = graphene.Float(required=True)
-        image = graphene.String()
+        image = graphene.String()  # Base64 image string
 
     product = graphene.Field(ProductType)
 
     def mutate(self, info, name, price, image=None):
-        product = Product.objects.create(name=name, price=price, image=image)
+        if image:
+            # Ensure base64 string is in the correct format
+            if image.startswith('data:image'):
+                image = image.split('base64,')[1]  # Remove 'data:image/jpeg;base64,' part
+
+            # Decode the base64 string
+            try:
+                image_data = base64.b64decode(image)
+                image_file = ContentFile(image_data, name="product_image.jpg")  # Assign name
+                product = Product(name=name, price=price, image=image_file)  # Store image file
+                product.save()
+            except Exception as e:
+                raise Exception(f"Error decoding image: {str(e)}")
+        else:
+            product = Product(name=name, price=price)
+            product.save()
+
         return CreateProduct(product=product)
 
 
 # Define UpdateProduct Mutation
 class UpdateProduct(graphene.Mutation):
+    product = graphene.Field(ProductType)
+
     class Arguments:
-        id = graphene.Int(required=True)
+        id = graphene.ID()
         name = graphene.String()
         price = graphene.Float()
         image = graphene.String()
 
-    product = graphene.Field(ProductType)
-
-    def mutate(self, info, id, name=None, price=None, image=None):
-        product = Product.objects.get(pk=id)
-        if name:
+    def mutate(self, info, id, name, price, image):
+        try:
+            product = Product.objects.get(id=id)
             product.name = name
-        if price:
             product.price = price
-        if image:
-            product.image = image
-        product.save()
-        return UpdateProduct(product=product)
+            product.image = image  # Assuming the image is base64 encoded
+            product.save()
+            return UpdateProduct(product=product)
+        except Product.DoesNotExist:
+            return UpdateProduct(product=None)
 
 
 # Define DeleteProduct Mutation
 class DeleteProduct(graphene.Mutation):
-    class Arguments:
-        id = graphene.Int(required=True)
-
     success = graphene.Boolean()
+    message = graphene.String()
+
+    class Arguments:
+        id = graphene.ID()
 
     def mutate(self, info, id):
         try:
-            product = Product.objects.get(pk=id)
+            product = Product.objects.get(id=id)
             product.delete()
-            return DeleteProduct(success=True)
+            return DeleteProduct(success=True, message="Product deleted successfully")
         except Product.DoesNotExist:
-            return DeleteProduct(success=False)
+            return DeleteProduct(success=False, message="Product not found")
 
 
 # Define Mutation Class
